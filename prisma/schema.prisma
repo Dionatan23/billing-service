@@ -13,12 +13,20 @@ datasource db {
 }
 
 model Plan {
-  id        String @id @default(uuid())
+  id        String   @id @default(uuid())
   name      String
+  slug      String   @unique
   price     Float
   credits   Int
-  duration  Int
-  type      String
+  duration  Int      // dias
+  type      PlanType
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+enum PlanType {
+  SUBSCRIPTION
+  PREPAID
 }
 
 model UserBilling {

@@ -12,6 +12,7 @@
     "ignoreDeprecations": "6.0"
   },
   "exclude": [
-    "prisma.config.ts"
+    "prisma.config.ts",
+    "prisma"
   ]
 }

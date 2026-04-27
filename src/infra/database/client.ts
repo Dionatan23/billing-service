@@ -1,15 +1,22 @@
 import { PrismaClient } from "../../generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 
-const adapter = new PrismaPg({
-  connectionString: process.env.DATABASE_URL!,
-  ssl: {
-    rejectUnauthorized: false,
-  },
-});
+const globalForPrisma = globalThis as unknown as {
+  prisma: PrismaClient | undefined;
+};
 
-console.log("DATABASE_URL:", process.env.DATABASE_URL);
+export const prisma =
+  globalForPrisma.prisma ??
+  new PrismaClient({
+    adapter: new PrismaPg({
+      connectionString: process.env.DATABASE_URL!,
+      ssl: {
+        rejectUnauthorized: false,
+      },
+    }),
+  });
 
-export const prisma = new PrismaClient({
-  adapter,
-});
+// Evita múltiplas instâncias em desenvolvimento (hot reload)
+if (process.env.NODE_ENV !== "production") {
+  globalForPrisma.prisma = prisma;
+}
