@@ -18,12 +18,66 @@ model Plan {
   slug      String   @unique
   price     Float
   credits   Int
-  duration  Int      // dias
+  duration  Int // dias
   type      PlanType
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
 
+  payments     Payment[]
   userBillings UserBilling[]
+}
+
+model Payment {
+  id String @id @default(cuid())
+
+  // 🔗 RELAÇÕES
+  userId String
+  user   UserBilling @relation(fields: [userId], references: [userId])
+
+  planId String
+  plan   Plan   @relation(fields: [planId], references: [id])
+
+  // 💳 DADOS DO PAGAMENTO
+  externalId String @unique // ID do Mercado Pago (CRÍTICO)
+  provider   String // "mercadopago"
+
+  amount   Float
+  currency String @default("BRL")
+
+  // 📊 STATUS
+  status PaymentStatus
+
+  // 🧠 CONTROLE
+  type     PaymentType
+  metadata Json?
+
+  // 🔒 IDEMPOTÊNCIA INTERNA (extra segurança)
+  idempotencyKey String? @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([planId])
+}
+
+model UserBilling {
+  id        String    @id @default(uuid())
+  userId    String    @unique
+  planId    String?
+  credits   Int       @default(0)
+  status    String
+  expiresAt DateTime?
+
+  payments Payment[]
+  plan     Plan?     @relation(fields: [planId], references: [id])
+}
+
+enum PaymentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
 }
 
 enum PlanType {
@@ -31,13 +85,7 @@ enum PlanType {
   PREPAID
 }
 
-model UserBilling {
-  id        String   @id @default(uuid())
-  userId    String   @unique
-  planId    String?
-  credits   Int      @default(0)
-  status    String
-  expiresAt DateTime?
-
-  plan Plan? @relation(fields: [planId], references: [id])
+enum PaymentType {
+  PREPAID
+  SUBSCRIPTION
 }
