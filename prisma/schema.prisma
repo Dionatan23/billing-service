@@ -22,6 +22,8 @@ model Plan {
   type      PlanType
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
+
+  userBillings UserBilling[]
 }
 
 enum PlanType {
@@ -36,5 +38,6 @@ model UserBilling {
   credits   Int      @default(0)
   status    String
   expiresAt DateTime?
-  createdAt DateTime @default(now())
+
+  plan Plan? @relation(fields: [planId], references: [id])
 }
