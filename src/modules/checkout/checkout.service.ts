@@ -1,7 +1,6 @@
 import axios from "axios";
 import { PaymentService } from "../payments/payments.service";
 import { prisma } from "../../infra/database/client";
-import { randomUUID } from "crypto";
 
 export class CheckoutService {
   private paymentService = new PaymentService();
@@ -16,7 +15,7 @@ export class CheckoutService {
       throw new Error("PLAN_NOT_FOUND");
     }
 
-    // 🔐 idempotência REAL
+    // 🔐 idempotência REAL (assinatura segura)
     const idempotencyKey = `${userId}-${planId}`;
 
     // 💾 cria payment
@@ -28,7 +27,7 @@ export class CheckoutService {
       idempotencyKey,
     });
 
-    // 💳 cria preferência no MP
+    // 💳 cria preferência Mercado Pago
     const response = await axios.post(
       "https://api.mercadopago.com/checkout/preferences",
       {
@@ -40,14 +39,43 @@ export class CheckoutService {
             unit_price: plan.price,
           },
         ],
+
         metadata: {
           paymentId: payment.id,
+          userId,
+          planId,
         },
-        notification_url: `${process.env.API_URL}/billing/webhook/mercadopago`,
+
+        statement_descriptor: "SERVILO",
+
+        // 🔥 CONTROLE DE PAGAMENTO (PIX + CARTÃO)
+        payment_methods: {
+          installments: 12,
+
+          excluded_payment_types: [
+            { id: "ticket" }, // ❌ remove boleto
+            { id: "atm" }, // ❌ remove lotérica
+          ],
+
+          excluded_payment_methods: [],
+        },
+
+        // 🔗 webhook
+        notification_url: `${process.env.API_URL}/webhook/mercadopago`,
+
+        // 🔁 retorno UX
+        back_urls: {
+          success: `${process.env.FRONT_URL}/payment/success`,
+          failure: `${process.env.FRONT_URL}/payment/failure`,
+          pending: `${process.env.FRONT_URL}/payment/pending`,
+        },
+
+        auto_return: "approved",
       },
       {
         headers: {
           Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
         },
       },
     );
@@ -58,7 +86,9 @@ export class CheckoutService {
     // 🔄 salva externalId
     await prisma.payment.update({
       where: { id: payment.id },
-      data: { externalId },
+      data: {
+        externalId,
+      },
     });
 
     return {

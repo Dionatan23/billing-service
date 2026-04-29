@@ -1,19 +1,26 @@
-import { PaymentService } from "../payments/payments.service";
 import { prisma } from "../../infra/database/client";
+import { PaymentService } from "../payments/payments.service";
 import { billingLogger } from "../billing/billing.logger";
+import { MercadoPagoService } from "../../adapters/payment-providers/mercado-pago/mercadopago.service";
 
 export class WebhookService {
   private paymentService = new PaymentService();
+  private mpService = new MercadoPagoService();
 
   async handleMercadoPago(body: any, log: any) {
-    const externalId = body?.data?.id;
-    const status = body?.data?.status;
+    const paymentId = body?.data?.id;
 
-    if (!externalId) {
+    if (!paymentId) {
       throw new Error("INVALID_WEBHOOK");
     }
 
-    // 🔎 busca payment
+    // 🔒 valida no Mercado Pago (CRÍTICO)
+    const mpPayment = await this.mpService.getPayment(paymentId);
+
+    const externalId = mpPayment.id.toString();
+    const status = mpPayment.status;
+
+    // 🔎 busca no banco
     const payment = await prisma.payment.findUnique({
       where: { externalId },
       include: { plan: true },
@@ -23,19 +30,17 @@ export class WebhookService {
       throw new Error("PAYMENT_NOT_FOUND");
     }
 
-    // 🔒 evita duplicidade
+    // 🔒 idempotência real
     if (payment.status === "APPROVED") {
       return;
     }
 
     if (status === "approved") {
-      // 🔄 atualiza payment
       await this.paymentService.updatePaymentByExternalId(externalId, {
         status: "APPROVED",
-        metadata: body,
+        metadata: mpPayment, // 🔥 salva resposta completa
       });
 
-      // 💰 adiciona créditos
       await prisma.userBilling.upsert({
         where: { userId: payment.userId },
         update: {
@@ -43,6 +48,7 @@ export class WebhookService {
             increment: payment.plan.credits,
           },
           planId: payment.planId,
+          status: "ACTIVE",
         },
         create: {
           userId: payment.userId,
@@ -55,12 +61,13 @@ export class WebhookService {
       billingLogger.paymentApproved(log, {
         userId: payment.userId,
         planId: payment.planId,
-        credits: payment.plan.credits,
+        amount: payment.amount,
+        externalId,
       });
     } else {
       await this.paymentService.updatePaymentByExternalId(externalId, {
         status: "REJECTED",
-        metadata: body,
+        metadata: mpPayment,
       });
 
       billingLogger.paymentRejected(log, {
