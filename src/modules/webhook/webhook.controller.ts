@@ -9,7 +9,7 @@ export class WebhookController {
     const body = request.body as any;
 
     try {
-      const result = await service.handleMercadoPago(body);
+      const result = await service.handleMercadoPago(body, request.log);
 
       // 🔁 já processado
       if ((result as any)?.alreadyProcessed) {
