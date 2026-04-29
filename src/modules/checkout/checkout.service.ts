@@ -1,9 +1,11 @@
-
-import { randomUUID } from "crypto";
 import axios from "axios";
+import { PaymentService } from "../payments/payments.service";
 import { prisma } from "../../infra/database/client";
+import { randomUUID } from "crypto";
 
 export class CheckoutService {
+  private paymentService = new PaymentService();
+
   async createCheckout(userId: string, planId: string) {
     // 🔎 valida plano
     const plan = await prisma.plan.findUnique({
@@ -14,25 +16,20 @@ export class CheckoutService {
       throw new Error("PLAN_NOT_FOUND");
     }
 
-    // 🔐 idempotência
-    const idempotencyKey = randomUUID();
+    // 🔐 idempotência REAL
+    const idempotencyKey = `${userId}-${planId}`;
 
-    // 💾 cria pagamento PENDING
-    const payment = await prisma.payment.create({
-      data: {
-        userId,
-        planId,
-        amount: plan.price,
-        currency: "BRL",
-        status: "PENDING",
-        provider: "mercadopago",
-        type: plan.type,
-        idempotencyKey,
-      },
+    // 💾 cria payment
+    const payment = await this.paymentService.createPayment({
+      userId,
+      planId,
+      amount: plan.price,
+      type: plan.type,
+      idempotencyKey,
     });
 
-    // 💳 integração Mercado Pago
-    const mpResponse = await axios.post(
+    // 💳 cria preferência no MP
+    const response = await axios.post(
       "https://api.mercadopago.com/checkout/preferences",
       {
         items: [
@@ -45,28 +42,23 @@ export class CheckoutService {
         ],
         metadata: {
           paymentId: payment.id,
-          userId,
-          planId,
         },
-        notification_url: `${process.env.API_URL}/webhook/mercadopago`,
+        notification_url: `${process.env.API_URL}/billing/webhook/mercadopago`,
       },
       {
         headers: {
           Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}`,
-          "Content-Type": "application/json",
         },
-      }
+      },
     );
 
-    const checkoutUrl = mpResponse.data.init_point;
-    const externalId = mpResponse.data.id;
+    const externalId = response.data.id;
+    const checkoutUrl = response.data.init_point;
 
-    // 🔄 atualiza payment com ID externo
+    // 🔄 salva externalId
     await prisma.payment.update({
       where: { id: payment.id },
-      data: {
-        externalId,
-      },
+      data: { externalId },
     });
 
     return {

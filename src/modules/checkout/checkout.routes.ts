@@ -1,8 +1,6 @@
 import { FastifyInstance } from "fastify";
-import { CheckoutController } from "./checkout.controller";
-
-const controller = new CheckoutController();
+import { checkoutController } from "./checkout.controller";
 
 export async function checkoutRoutes(app: FastifyInstance) {
-  app.post("/checkout", controller.create);
+  app.post("/", checkoutController.createCheckout);
 }

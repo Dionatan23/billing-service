@@ -1,95 +1,72 @@
+import { PaymentService } from "../payments/payments.service";
 import { prisma } from "../../infra/database/client";
-
+import { billingLogger } from "../billing/billing.logger";
 
 export class WebhookService {
-  async handleMercadoPago(data: any) {
-    const externalId = data?.id;
-    const status = data?.status;
+  private paymentService = new PaymentService();
 
-    if (!externalId || !status) {
+  async handleMercadoPago(body: any, log: any) {
+    const externalId = body?.data?.id;
+    const status = body?.data?.status;
+
+    if (!externalId) {
       throw new Error("INVALID_WEBHOOK");
     }
 
-    // 🔎 busca pagamento
+    // 🔎 busca payment
     const payment = await prisma.payment.findUnique({
       where: { externalId },
-      include: {
-        plan: true,
-      },
+      include: { plan: true },
     });
 
     if (!payment) {
       throw new Error("PAYMENT_NOT_FOUND");
     }
 
-    // 🛑 idempotência (já processado)
+    // 🔒 evita duplicidade
     if (payment.status === "APPROVED") {
-      return { alreadyProcessed: true };
+      return;
     }
 
-    // 🔄 processa dentro de transação
-    return prisma.$transaction(async (tx: any) => {
-      // 🔄 atualiza status
-      await tx.payment.update({
-        where: { id: payment.id },
-        data: {
-          status: this.mapStatus(status),
-          metadata: data,
+    if (status === "approved") {
+      // 🔄 atualiza payment
+      await this.paymentService.updatePaymentByExternalId(externalId, {
+        status: "APPROVED",
+        metadata: body,
+      });
+
+      // 💰 adiciona créditos
+      await prisma.userBilling.upsert({
+        where: { userId: payment.userId },
+        update: {
+          credits: {
+            increment: payment.plan.credits,
+          },
+          planId: payment.planId,
+        },
+        create: {
+          userId: payment.userId,
+          credits: payment.plan.credits,
+          planId: payment.planId,
+          status: "ACTIVE",
         },
       });
 
-      // ✅ só processa se aprovado
-      if (status === "approved") {
-        // 🔎 busca ou cria billing
-        const billing = await tx.userBilling.findUnique({
-          where: { userId: payment.userId },
-        });
+      billingLogger.paymentApproved(log, {
+        userId: payment.userId,
+        planId: payment.planId,
+        credits: payment.plan.credits,
+      });
+    } else {
+      await this.paymentService.updatePaymentByExternalId(externalId, {
+        status: "REJECTED",
+        metadata: body,
+      });
 
-        if (!billing) {
-          await tx.userBilling.create({
-            data: {
-              userId: payment.userId,
-              credits: payment.plan.credits,
-              planId: payment.planId,
-              status: "ACTIVE",
-              expiresAt: this.calculateExpiration(payment.plan.duration),
-            },
-          });
-        } else {
-          await tx.userBilling.update({
-            where: { userId: payment.userId },
-            data: {
-              credits: {
-                increment: payment.plan.credits,
-              },
-              planId: payment.planId,
-              status: "ACTIVE",
-              expiresAt: this.calculateExpiration(payment.plan.duration),
-            },
-          });
-        }
-      }
-
-      return { success: true };
-    });
-  }
-
-  private mapStatus(status: string) {
-    switch (status) {
-      case "approved":
-        return "APPROVED";
-      case "rejected":
-        return "REJECTED";
-      case "cancelled":
-        return "CANCELLED";
-      default:
-        return "PENDING";
+      billingLogger.paymentRejected(log, {
+        externalId,
+        status,
+      });
     }
-  }
-
-  private calculateExpiration(days: number) {
-    const date = new Date();
-    date.setDate(date.getDate() + days);
-    return date;
   }
 }

@@ -12,9 +12,7 @@ export class PaymentService {
     idempotencyKey: string;
   }) {
     // 🔒 evita duplicidade
-    const existing = await this.repo.findByIdempotencyKey(
-      input.idempotencyKey
-    );
+    const existing = await this.repo.findByIdempotencyKey(input.idempotencyKey);
 
     if (existing) {
       return existing;
@@ -36,10 +34,14 @@ export class PaymentService {
   }
 
   // 🔄 atualiza após retorno do provider
-  async updatePaymentByExternalId(externalId: string, data: {
-    status?: "APPROVED" | "REJECTED" | "PENDING";
-    providerResponse?: any;
-  }) {
+  async updatePaymentByExternalId(
+    externalId: string,
+    data: {
+      status?: "APPROVED" | "REJECTED" | "PENDING";
+      providerResponse?: any;
+      metadata?: any;
+    },
+  ) {
     const payment = await this.repo.findByExternalId(externalId);
 
     if (!payment) {
@@ -61,4 +63,4 @@ export class PaymentService {
   async getPaymentById(id: string) {
     return this.repo.findById(id);
   }
-}   
+}
