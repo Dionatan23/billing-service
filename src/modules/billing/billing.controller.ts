@@ -51,38 +51,4 @@ export const billingController = {
       });
     }
   },
-
-  async webhookMercadoPago(request: FastifyRequest, reply: FastifyReply) {
-    const body = request.body as any;
-
-    const status = body?.data?.status;
-    const userId = body?.data?.user_id;
-    const planId = body?.data?.plan_id;
-
-    try {
-      if (status === "approved") {
-        await service.activatePlan(userId, planId);
-
-        billingLogger.paymentApproved(request.log, {
-          userId,
-          planId,
-        });
-      } else {
-        billingLogger.paymentRejected(request.log, {
-          userId,
-          status,
-        });
-      }
-
-      return reply.send({ ok: true });
-    } catch (error) {
-      request.log.error({
-        event: "webhook_error",
-        error,
-        body,
-      });
-
-      return reply.status(500).send({ ok: false });
-    }
-  },
 };

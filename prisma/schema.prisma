@@ -38,7 +38,7 @@ model Payment {
   plan   Plan   @relation(fields: [planId], references: [id])
 
   // 💳 DADOS DO PAGAMENTO
-  externalId String @unique // ID do Mercado Pago (CRÍTICO)
+  externalId String? @unique // ID do Mercado Pago (CRÍTICO)
   provider   String // "mercadopago"
 
   amount   Float
