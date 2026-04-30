@@ -8,72 +8,99 @@ export class WebhookService {
   private mpService = new MercadoPagoService();
 
   async handleMercadoPago(body: any, log: any) {
-    const paymentId = body?.data?.id;
+    try {
+      const paymentId = body?.data?.id;
 
-    if (!paymentId) {
-      throw new Error("INVALID_WEBHOOK");
-    }
+      if (!paymentId) {
+        throw new Error("INVALID_WEBHOOK");
+      }
 
-    // 🔒 valida no Mercado Pago (CRÍTICO)
-    const mpPayment = await this.mpService.getPayment(paymentId);
+      // 🔒 valida direto no MP
+      const mpPayment = await this.mpService.getPayment(paymentId);
 
-    const externalId = mpPayment.id.toString();
-    const status = mpPayment.status;
+      const externalId = mpPayment.id.toString();
+      const status = mpPayment.status;
 
-    // 🔎 busca no banco
-    const payment = await prisma.payment.findUnique({
-      where: { externalId },
-      include: { plan: true },
-    });
-
-    if (!payment) {
-      throw new Error("PAYMENT_NOT_FOUND");
-    }
-
-    // 🔒 idempotência real
-    if (payment.status === "APPROVED") {
-      return;
-    }
-
-    if (status === "approved") {
-      await this.paymentService.updatePaymentByExternalId(externalId, {
-        status: "APPROVED",
-        metadata: mpPayment, // 🔥 salva resposta completa
+      // 🔎 busca no banco (COM PLAN)
+      const payment = await prisma.payment.findUnique({
+        where: { externalId },
+        include: { plan: true },
       });
 
-      await prisma.userBilling.upsert({
-        where: { userId: payment.userId },
-        update: {
-          credits: {
-            increment: payment.plan.credits,
+      if (!payment) {
+        throw new Error("PAYMENT_NOT_FOUND");
+      }
+
+      // 🚨 VALIDAÇÕES CRÍTICAS
+      if (!payment.userId) {
+        throw new Error("USER_ID_MISSING");
+      }
+
+      if (!payment.plan) {
+        throw new Error("PLAN_NOT_LOADED");
+      }
+
+      // 🔒 idempotência
+      if (payment.status === "APPROVED") {
+        log.info({
+          event: "webhook_already_processed",
+          externalId,
+        });
+        return;
+      }
+
+      if (status === "approved") {
+        // ✅ atualiza pagamento
+        await this.paymentService.updatePaymentByExternalId(externalId, {
+          status: "APPROVED",
+          metadata: mpPayment,
+        });
+
+        // ✅ ativa plano / adiciona créditos
+        await prisma.userBilling.upsert({
+          where: { userId: payment.userId },
+          update: {
+            credits: {
+              increment: payment.plan.credits,
+            },
+            planId: payment.planId,
+            status: "ACTIVE",
           },
-          planId: payment.planId,
-          status: "ACTIVE",
-        },
-        create: {
+          create: {
+            userId: payment.userId,
+            credits: payment.plan.credits,
+            planId: payment.planId,
+            status: "ACTIVE",
+          },
+        });
+
+        billingLogger.paymentApproved(log, {
           userId: payment.userId,
-          credits: payment.plan.credits,
           planId: payment.planId,
-          status: "ACTIVE",
-        },
+          amount: payment.amount,
+          externalId,
+        });
+      } else {
+        await this.paymentService.updatePaymentByExternalId(externalId, {
+          status: "REJECTED",
+          metadata: mpPayment,
+        });
+
+        billingLogger.paymentRejected(log, {
+          externalId,
+          status,
+        });
+      }
+    } catch (error: any) {
+      // 🔥 LOG CRÍTICO (isso vai te salvar muito tempo)
+      log.error({
+        event: "webhook_error",
+        message: error.message,
+        stack: error.stack,
+        body,
       });
 
-      billingLogger.paymentApproved(log, {
-        userId: payment.userId,
-        planId: payment.planId,
-        amount: payment.amount,
-        externalId,
-      });
-    } else {
-      await this.paymentService.updatePaymentByExternalId(externalId, {
-        status: "REJECTED",
-        metadata: mpPayment,
-      });
-
-      billingLogger.paymentRejected(log, {
-        externalId,
-        status,
-      });
+      throw error; // mantém comportamento atual
     }
   }
 }
